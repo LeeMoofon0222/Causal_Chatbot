@@ -84,7 +84,7 @@ def try_upload_json(file_content,email,project_id):
 
 def model_select(model):
     if model == "Llama3 8b":
-        model_name = "llama3:latest"
+        model_name = "llama3:8b"
         model_type = "llama"
     elif model == "GPT 4o":
         model_name = "gpt-4o"
@@ -200,6 +200,7 @@ def txt_to_string(uploaded_file):
     except Exception as e:
         return f"An error occurred: {e}"
 
+
 def sql_create():
     conn = sqlite3.connect('messages.db')
 
@@ -222,11 +223,181 @@ def sql_create():
     conn.close()
 
 
+def model_tweaks(model_type, model_name):
+    TWEAKS = {
+        "Chroma-AD9ep": {
+            "allow_duplicates": False,
+            "chroma_server_cors_allow_origins": "",
+            "chroma_server_grpc_port": None,
+            "chroma_server_host": "",
+            "chroma_server_http_port": None,
+            "chroma_server_ssl_enabled": False,
+            "collection_name": "langflow",
+            "limit": None,
+            "number_of_results": 5,
+            "persist_directory": "",
+            "search_query": "",
+            "search_type": "Similarity"
+        },
+        "ChatInput-baxPA": {
+            "files": "",
+            "sender": "User",
+            "sender_name": "User",
+            "session_id": sessionID
+        },
+        "ChatOutput-8U3qC": {
+            "data_template": "{text}",
+            "input_value": "",
+            "sender": "Machine",
+            "sender_name": "AI",
+            "session_id": sessionID
+        },
+        "ParseData-6hQ9b": {
+            "sep": "\n",
+            "template": "{text}"
+        },
+        "GroupNode-cDFw7": {
+            "path_File-K3ohz": current_dir + "/json_file_storage" + f"/{email}/{project_id}.json",
+            "code_File-K3ohz": "from pathlib import Path\n\nfrom langflow.base.data.utils import TEXT_FILE_TYPES, parse_text_file_to_data\nfrom langflow.custom import Component\nfrom langflow.io import BoolInput, FileInput, Output\nfrom langflow.schema import Data\n\n\nclass FileComponent(Component):\n    display_name = \"File\"\n    description = \"A generic file loader.\"\n    icon = \"file-text\"\n\n    inputs = [\n        FileInput(\n            name=\"path\",\n            display_name=\"Path\",\n            file_types=TEXT_FILE_TYPES,\n            info=f\"Supported file types: {', '.join(TEXT_FILE_TYPES)}\",\n        ),\n        BoolInput(\n            name=\"silent_errors\",\n            display_name=\"Silent Errors\",\n            advanced=True,\n            info=\"If True, errors will not raise an exception.\",\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Data\", name=\"data\", method=\"load_file\"),\n    ]\n\n    def load_file(self) -> Data:\n        if not self.path:\n            raise ValueError(\"Please, upload a file to use this component.\")\n        resolved_path = self.resolve_path(self.path)\n        silent_errors = self.silent_errors\n\n        extension = Path(resolved_path).suffix[1:].lower()\n\n        if extension == \"doc\":\n            raise ValueError(\"doc files are not supported. Please save as .docx\")\n        if extension not in TEXT_FILE_TYPES:\n            raise ValueError(f\"Unsupported file type: {extension}\")\n\n        data = parse_text_file_to_data(resolved_path, silent_errors)\n        self.status = data if data else \"No data\"\n        return data or Data()\n",
+            "silent_errors_File-K3ohz": False,
+            "chunk_overlap_CharacterTextSplitter-Zr2KP": 200,
+            "chunk_size_CharacterTextSplitter-Zr2KP": 1000,
+            "code_CharacterTextSplitter-Zr2KP": "from typing import List\n\nfrom langchain_text_splitters import CharacterTextSplitter\n\nfrom langflow.custom import CustomComponent\nfrom langflow.schema import Data\nfrom langflow.utils.util import unescape_string\n\n\nclass CharacterTextSplitterComponent(CustomComponent):\n    display_name = \"CharacterTextSplitter\"\n    description = \"Splitting text that looks at characters.\"\n\n    def build_config(self):\n        return {\n            \"inputs\": {\"display_name\": \"Input\", \"input_types\": [\"Document\", \"Data\"]},\n            \"chunk_overlap\": {\"display_name\": \"Chunk Overlap\", \"default\": 200},\n            \"chunk_size\": {\"display_name\": \"Chunk Size\", \"default\": 1000},\n            \"separator\": {\"display_name\": \"Separator\", \"default\": \"\\n\"},\n        }\n\n    def build(\n        self,\n        inputs: List[Data],\n        chunk_overlap: int = 200,\n        chunk_size: int = 1000,\n        separator: str = \"\\n\",\n    ) -> List[Data]:\n        # separator may come escaped from the frontend\n        separator = unescape_string(separator)\n        documents = []\n        for _input in inputs:\n            if isinstance(_input, Data):\n                documents.append(_input.to_lc_document())\n            else:\n                documents.append(_input)\n        docs = CharacterTextSplitter(\n            chunk_overlap=chunk_overlap,\n            chunk_size=chunk_size,\n            separator=separator,\n        ).split_documents(documents)\n        data = self.to_data(docs)\n        self.status = data\n        return data\n",
+            "separator_CharacterTextSplitter-Zr2KP": " "
+        },
+        "GroupNode-3m6Jg": {
+            "code_PromptComponent-KYRBR": "from langflow.base.prompts.api_utils import process_prompt_template\nfrom langflow.custom import Component\nfrom langflow.io import Output, PromptInput\nfrom langflow.schema.message import Message\nfrom langflow.template.utils import update_template_values\n\n\nclass PromptComponent(Component):\n    display_name: str = \"Prompt\"\n    description: str = \"Create a prompt template with dynamic variables.\"\n    icon = \"prompts\"\n    trace_type = \"prompt\"\n\n    inputs = [\n        PromptInput(name=\"template\", display_name=\"Template\"),\n    ]\n\n    outputs = [\n        Output(display_name=\"Prompt Message\", name=\"prompt\", method=\"build_prompt\"),\n    ]\n\n    async def build_prompt(\n        self,\n    ) -> Message:\n        prompt = await Message.from_template_and_variables(**self._attributes)\n        self.status = prompt.text\n        return prompt\n\n    def post_code_processing(self, new_build_config: dict, current_build_config: dict):\n        \"\"\"\n        This function is called after the code validation is done.\n        \"\"\"\n        frontend_node = super().post_code_processing(new_build_config, current_build_config)\n        template = frontend_node[\"template\"][\"template\"][\"value\"]\n        _ = process_prompt_template(\n            template=template,\n            name=\"template\",\n            custom_fields=frontend_node[\"custom_fields\"],\n            frontend_node_template=frontend_node[\"template\"],\n        )\n        # Now that template is updated, we need to grab any values that were set in the current_build_config\n        # and update the frontend_node with those values\n        update_template_values(frontend_template=frontend_node, raw_template=current_build_config[\"template\"])\n        return frontend_node\n",
+            "template_PromptComponent-KYRBR": "Kindly provide a response to the user's inquiry, adhering to the provided context and message history. Please ensure the following rules are followed:\n\nAvoid repetition of information already stated in the context or message history.\nMaintain clarity and conciseness in your response.\nEnsure relevance to the user's question.\n\nContext: {context}\n\nMessage History:\n{history}\n\nUser's Question: {question}",
+            "context_PromptComponent-KYRBR": "",
+            "question_PromptComponent-KYRBR": "",
+            "code_Memory-iGzuM": "from langflow.custom import Component\nfrom langflow.helpers.data import data_to_text\nfrom langflow.io import DropdownInput, IntInput, MessageTextInput, MultilineInput, Output\nfrom langflow.memory import get_messages\nfrom langflow.schema import Data\nfrom langflow.schema.message import Message\n\n\nclass MemoryComponent(Component):\n    display_name = \"Chat Memory\"\n    description = \"Retrieves stored chat messages.\"\n    icon = \"message-square-more\"\n\n    inputs = [\n        DropdownInput(\n            name=\"sender\",\n            display_name=\"Sender Type\",\n            options=[\"Machine\", \"User\", \"Machine and User\"],\n            value=\"Machine and User\",\n            info=\"Type of sender.\",\n            advanced=True,\n        ),\n        MessageTextInput(\n            name=\"sender_name\",\n            display_name=\"Sender Name\",\n            info=\"Name of the sender.\",\n            advanced=True,\n        ),\n        IntInput(\n            name=\"n_messages\",\n            display_name=\"Number of Messages\",\n            value=100,\n            info=\"Number of messages to retrieve.\",\n            advanced=True,\n        ),\n        MessageTextInput(\n            name=\"session_id\",\n            display_name=\"Session ID\",\n            info=\"Session ID of the chat history.\",\n            advanced=True,\n        ),\n        DropdownInput(\n            name=\"order\",\n            display_name=\"Order\",\n            options=[\"Ascending\", \"Descending\"],\n            value=\"Ascending\",\n            info=\"Order of the messages.\",\n            advanced=True,\n        ),\n        MultilineInput(\n            name=\"template\",\n            display_name=\"Template\",\n            info=\"The template to use for formatting the data. It can contain the keys {text}, {sender} or any other key in the message data.\",\n            value=\"{sender_name}: {text}\",\n            advanced=True,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Chat History\", name=\"messages\", method=\"retrieve_messages\"),\n        Output(display_name=\"Messages (Text)\", name=\"messages_text\", method=\"retrieve_messages_as_text\"),\n    ]\n\n    def retrieve_messages(self) -> Data:\n        sender = self.sender\n        sender_name = self.sender_name\n        session_id = self.session_id\n        n_messages = self.n_messages\n        order = \"DESC\" if self.order == \"Descending\" else \"ASC\"\n\n        if sender == \"Machine and User\":\n            sender = None\n\n        messages = get_messages(\n            sender=sender,\n            sender_name=sender_name,\n            session_id=session_id,\n            limit=n_messages,\n            order=order,\n        )\n        self.status = messages\n        return messages\n\n    def retrieve_messages_as_text(self) -> Message:\n        messages_text = data_to_text(self.template, self.retrieve_messages())\n        self.status = messages_text\n        return Message(text=messages_text)\n",
+            "n_messages_Memory-iGzuM": 100,
+            "order_Memory-iGzuM": "Ascending",
+            "sender_Memory-iGzuM": "Machine and User",
+            "sender_name_Memory-iGzuM": "",
+            "session_id_Memory-iGzuM": sessionID,
+            "template_Memory-iGzuM": "{sender_name}: {text}"
+        },
+        "OllamaEmbeddings-qmIRW": {
+            "base_url": "http://localhost:11434",
+            "model": "llama3:latest",
+            "temperature": 0
+        },
+        "TextInput-rNRx2": {
+            "input_value": "This is the file explaintion\n" + feature_explaintion + "\n" + "Please read the explaintion and take look at \"x\",\"y\",\"imp\",\"co\". For every json object, x and y means two factors that x is a cause of y. The bigger imp(importance) value means x and y have strongger causation. If \"co\" value smaller than 0, that means the bigger x will make smaller y. If \"co\" (correlation) value bigger than 0, that means the bigger x will make bigger y.\n"
+        },
+        "CombineText-fqCBz": {
+            "delimiter": " ",
+            "text1": "",
+            "text2": ""
+        },
+        "CombineText-nQONx": {
+            "delimiter": " ",
+            "text1": "",
+            "text2": ""
+        }
+    }
+    
+    if(model_type == "openai"):
+        TWEAKS["OpenAIModel-1pAyL"] = {
+            "api_key": os.getenv("OPENAI_API_KEY"),
+            "input_value": "",
+            "json_mode": False,
+            "model_kwargs": {},
+            "model_name": model_name,
+            "openai_api_base": "",
+            "output_schema": {},
+            "seed": 1,
+            "stream": False,
+            "system_message": "",
+            "temperature": 0
+        }
+        melt("OpenAIModel-1pAyL")
+        freeze("OllamaModel-YGE1a")
+    else:
+        TWEAKS["OllamaModel-YGE1a"] = {
+            "base_url": "http://localhost:11434",
+            "format": "",
+            "metadata": {},
+            "mirostat": "Disabled",
+            "mirostat_eta": None,
+            "mirostat_tau": None,
+            "model": model_name,
+            "num_ctx": None,
+            "num_gpu": None,
+            "num_thread": None,
+            "repeat_last_n": None,
+            "repeat_penalty": None,
+            "stream": True,
+            "system": "",
+            "system_message": "",
+            "tags": "",
+            "temperature": 0,
+            "template": "",
+            "tfs_z": None,
+            "timeout": None,
+            "top_k": None,
+            "top_p": None,
+            "verbose": False
+        }
+        melt("OllamaModel-YGE1a")
+        freeze("OpenAIModel-1pAyL")
+    
+    return TWEAKS
+
+def freeze(component_id):
+    api_url = f"http://127.0.0.1:7860/api/v1/flow/db2345d0-e4c8-4475-8528-bf1d994bc6e8/components/{component_id}"
+
+
+    payload = {
+        "node": {
+            "frozen": True
+        }
+    }
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {os.getenv("LANGFLOW_API_KEY")}'
+    }
+    
+    # Send the request to update the component
+    response = requests.patch(api_url, json=payload, headers=headers)
+
+    if response.status_code == 200:
+        print("Component frozen successfully.")
+    else:
+        print(f"Failed to freeze the component. Status code: {response.status_code}, Response: {response.text}")
+
+
+def melt(component_id):
+    api_url = f"http://127.0.0.1:7860/api/v1/components/{component_id}"
+
+    payload = {
+        "node": {
+            "frozen": False
+        }
+    }
+
+    headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': os.getenv("LANGFLOW_API_KEY")
+    }
+    
+    response = requests.patch(api_url, json=payload, headers=headers)
+
+    if response.status_code == 200:
+        print("Component frozen successfully.")
+    else:
+        print(f"Failed to freeze the component. Status code: {response.status_code}, Response: {response.text}")
+
+
 load_dotenv()
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-current_project_id = "-1"
+current_project_id = "0"
+
+sql_create()
 
 # -----------------------------------------------UI--------------------------------------------------------#
 
@@ -299,130 +470,7 @@ BASE_API_URL = "http://127.0.0.1:7860"
 FLOW_ID = "db2345d0-e4c8-4475-8528-bf1d994bc6e8"
 ENDPOINT = "" 
 
-TWEAKS = {
-  "Chroma-AD9ep": {
-    "allow_duplicates": False,
-    "chroma_server_cors_allow_origins": "",
-    "chroma_server_grpc_port": None,
-    "chroma_server_host": "",
-    "chroma_server_http_port": None,
-    "chroma_server_ssl_enabled": False,
-    "collection_name": "langflow",
-    "limit": None,
-    "number_of_results": 5,
-    "persist_directory": "",
-    "search_query": "",
-    "search_type": "Similarity"
-  },
-  "ChatInput-baxPA": {
-    "files": "",
-    "sender": "User",
-    "sender_name": "User",
-    "session_id": sessionID
-  },
-  "ChatOutput-8U3qC": {
-    "data_template": "{text}",
-    "input_value": "",
-    "sender": "Machine",
-    "sender_name": "AI",
-    "session_id": sessionID
-  },
-  "ParseData-6hQ9b": {
-    "sep": "\n",
-    "template": "{text}"
-  },
-  "GroupNode-cDFw7": {
-    "path_File-K3ohz": current_dir + "/json_file_storage" + f"/{email}/{project_id}.json",
-    "code_File-K3ohz": "from pathlib import Path\n\nfrom langflow.base.data.utils import TEXT_FILE_TYPES, parse_text_file_to_data\nfrom langflow.custom import Component\nfrom langflow.io import BoolInput, FileInput, Output\nfrom langflow.schema import Data\n\n\nclass FileComponent(Component):\n    display_name = \"File\"\n    description = \"A generic file loader.\"\n    icon = \"file-text\"\n\n    inputs = [\n        FileInput(\n            name=\"path\",\n            display_name=\"Path\",\n            file_types=TEXT_FILE_TYPES,\n            info=f\"Supported file types: {', '.join(TEXT_FILE_TYPES)}\",\n        ),\n        BoolInput(\n            name=\"silent_errors\",\n            display_name=\"Silent Errors\",\n            advanced=True,\n            info=\"If True, errors will not raise an exception.\",\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Data\", name=\"data\", method=\"load_file\"),\n    ]\n\n    def load_file(self) -> Data:\n        if not self.path:\n            raise ValueError(\"Please, upload a file to use this component.\")\n        resolved_path = self.resolve_path(self.path)\n        silent_errors = self.silent_errors\n\n        extension = Path(resolved_path).suffix[1:].lower()\n\n        if extension == \"doc\":\n            raise ValueError(\"doc files are not supported. Please save as .docx\")\n        if extension not in TEXT_FILE_TYPES:\n            raise ValueError(f\"Unsupported file type: {extension}\")\n\n        data = parse_text_file_to_data(resolved_path, silent_errors)\n        self.status = data if data else \"No data\"\n        return data or Data()\n",
-    "silent_errors_File-K3ohz": False,
-    "chunk_overlap_CharacterTextSplitter-Zr2KP": 200,
-    "chunk_size_CharacterTextSplitter-Zr2KP": 1000,
-    "code_CharacterTextSplitter-Zr2KP": "from typing import List\n\nfrom langchain_text_splitters import CharacterTextSplitter\n\nfrom langflow.custom import CustomComponent\nfrom langflow.schema import Data\nfrom langflow.utils.util import unescape_string\n\n\nclass CharacterTextSplitterComponent(CustomComponent):\n    display_name = \"CharacterTextSplitter\"\n    description = \"Splitting text that looks at characters.\"\n\n    def build_config(self):\n        return {\n            \"inputs\": {\"display_name\": \"Input\", \"input_types\": [\"Document\", \"Data\"]},\n            \"chunk_overlap\": {\"display_name\": \"Chunk Overlap\", \"default\": 200},\n            \"chunk_size\": {\"display_name\": \"Chunk Size\", \"default\": 1000},\n            \"separator\": {\"display_name\": \"Separator\", \"default\": \"\\n\"},\n        }\n\n    def build(\n        self,\n        inputs: List[Data],\n        chunk_overlap: int = 200,\n        chunk_size: int = 1000,\n        separator: str = \"\\n\",\n    ) -> List[Data]:\n        # separator may come escaped from the frontend\n        separator = unescape_string(separator)\n        documents = []\n        for _input in inputs:\n            if isinstance(_input, Data):\n                documents.append(_input.to_lc_document())\n            else:\n                documents.append(_input)\n        docs = CharacterTextSplitter(\n            chunk_overlap=chunk_overlap,\n            chunk_size=chunk_size,\n            separator=separator,\n        ).split_documents(documents)\n        data = self.to_data(docs)\n        self.status = data\n        return data\n",
-    "separator_CharacterTextSplitter-Zr2KP": " "
-  },
-  "GroupNode-3m6Jg": {
-    "code_PromptComponent-KYRBR": "from langflow.base.prompts.api_utils import process_prompt_template\nfrom langflow.custom import Component\nfrom langflow.io import Output, PromptInput\nfrom langflow.schema.message import Message\nfrom langflow.template.utils import update_template_values\n\n\nclass PromptComponent(Component):\n    display_name: str = \"Prompt\"\n    description: str = \"Create a prompt template with dynamic variables.\"\n    icon = \"prompts\"\n    trace_type = \"prompt\"\n\n    inputs = [\n        PromptInput(name=\"template\", display_name=\"Template\"),\n    ]\n\n    outputs = [\n        Output(display_name=\"Prompt Message\", name=\"prompt\", method=\"build_prompt\"),\n    ]\n\n    async def build_prompt(\n        self,\n    ) -> Message:\n        prompt = await Message.from_template_and_variables(**self._attributes)\n        self.status = prompt.text\n        return prompt\n\n    def post_code_processing(self, new_build_config: dict, current_build_config: dict):\n        \"\"\"\n        This function is called after the code validation is done.\n        \"\"\"\n        frontend_node = super().post_code_processing(new_build_config, current_build_config)\n        template = frontend_node[\"template\"][\"template\"][\"value\"]\n        _ = process_prompt_template(\n            template=template,\n            name=\"template\",\n            custom_fields=frontend_node[\"custom_fields\"],\n            frontend_node_template=frontend_node[\"template\"],\n        )\n        # Now that template is updated, we need to grab any values that were set in the current_build_config\n        # and update the frontend_node with those values\n        update_template_values(frontend_template=frontend_node, raw_template=current_build_config[\"template\"])\n        return frontend_node\n",
-    "template_PromptComponent-KYRBR": "Kindly provide a response to the user's inquiry, adhering to the provided context and message history. Please ensure the following rules are followed:\n\nAvoid repetition of information already stated in the context or message history.\nMaintain clarity and conciseness in your response.\nEnsure relevance to the user's question.\n\nContext: {context}\n\nMessage History:\n{history}\n\nUser's Question: {question}",
-    "context_PromptComponent-KYRBR": "",
-    "question_PromptComponent-KYRBR": "",
-    "code_Memory-iGzuM": "from langflow.custom import Component\nfrom langflow.helpers.data import data_to_text\nfrom langflow.io import DropdownInput, IntInput, MessageTextInput, MultilineInput, Output\nfrom langflow.memory import get_messages\nfrom langflow.schema import Data\nfrom langflow.schema.message import Message\n\n\nclass MemoryComponent(Component):\n    display_name = \"Chat Memory\"\n    description = \"Retrieves stored chat messages.\"\n    icon = \"message-square-more\"\n\n    inputs = [\n        DropdownInput(\n            name=\"sender\",\n            display_name=\"Sender Type\",\n            options=[\"Machine\", \"User\", \"Machine and User\"],\n            value=\"Machine and User\",\n            info=\"Type of sender.\",\n            advanced=True,\n        ),\n        MessageTextInput(\n            name=\"sender_name\",\n            display_name=\"Sender Name\",\n            info=\"Name of the sender.\",\n            advanced=True,\n        ),\n        IntInput(\n            name=\"n_messages\",\n            display_name=\"Number of Messages\",\n            value=100,\n            info=\"Number of messages to retrieve.\",\n            advanced=True,\n        ),\n        MessageTextInput(\n            name=\"session_id\",\n            display_name=\"Session ID\",\n            info=\"Session ID of the chat history.\",\n            advanced=True,\n        ),\n        DropdownInput(\n            name=\"order\",\n            display_name=\"Order\",\n            options=[\"Ascending\", \"Descending\"],\n            value=\"Ascending\",\n            info=\"Order of the messages.\",\n            advanced=True,\n        ),\n        MultilineInput(\n            name=\"template\",\n            display_name=\"Template\",\n            info=\"The template to use for formatting the data. It can contain the keys {text}, {sender} or any other key in the message data.\",\n            value=\"{sender_name}: {text}\",\n            advanced=True,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Chat History\", name=\"messages\", method=\"retrieve_messages\"),\n        Output(display_name=\"Messages (Text)\", name=\"messages_text\", method=\"retrieve_messages_as_text\"),\n    ]\n\n    def retrieve_messages(self) -> Data:\n        sender = self.sender\n        sender_name = self.sender_name\n        session_id = self.session_id\n        n_messages = self.n_messages\n        order = \"DESC\" if self.order == \"Descending\" else \"ASC\"\n\n        if sender == \"Machine and User\":\n            sender = None\n\n        messages = get_messages(\n            sender=sender,\n            sender_name=sender_name,\n            session_id=session_id,\n            limit=n_messages,\n            order=order,\n        )\n        self.status = messages\n        return messages\n\n    def retrieve_messages_as_text(self) -> Message:\n        messages_text = data_to_text(self.template, self.retrieve_messages())\n        self.status = messages_text\n        return Message(text=messages_text)\n",
-    "n_messages_Memory-iGzuM": 100,
-    "order_Memory-iGzuM": "Ascending",
-    "sender_Memory-iGzuM": "Machine and User",
-    "sender_name_Memory-iGzuM": "",
-    "session_id_Memory-iGzuM": sessionID,
-    "template_Memory-iGzuM": "{sender_name}: {text}"
-  },
-  "OllamaEmbeddings-qmIRW": {
-    "base_url": "http://localhost:11434",
-    "model": "llama3:latest",
-    "temperature": 0
-  },
-  "CombineText-rNRx2": {
-    "delimiter": " ",
-    "text1": "",
-    "text2": ""
-  },
-  "TextInput-rNRx2": {
-    "input_value": "This is the file explaintion\n" + feature_explaintion + "\n" + "Please read the explaintion and take look at \"x\",\"y\",\"imp\",\"co\". For every json object, x and y means two factors that x is a cause of y. The bigger imp(importance) value means x and y have strongger causation. If \"co\" value smaller than 0, that means the bigger x will make smaller y. If \"co\" value bigger than 0, that means the bigger x will make bigger y.\n"
-  },
-  "CombineText-KM0OB": {
-    "delimiter": " ",
-    "text1": "",
-    "text2": ""
-  }
-  
-}
-
-
-if model_type == "llama":
-    TWEAKS.pop("OpenAIModel-jz1Db", None)
-    TWEAKS.pop("OllamaModel-0kgkQ", None)
-    TWEAKS["OllamaModel-0kgkQ"] = {
-        "base_url": "http://localhost:11434",
-        "format": "",
-        "input_value": "",
-        "metadata": {},
-        "mirostat": "Disabled",
-        "mirostat_eta": None,
-        "mirostat_tau": None,
-        "model": model_name,
-        "num_ctx": None,
-        "num_gpu": None,
-        "num_thread": None,
-        "repeat_last_n": None,
-        "repeat_penalty": None,
-        "stop_tokens": "",
-        "stream": True,
-        "system": "",
-        "system_message": "",
-        "tags": "",
-        "temperature": 0,
-        "template": "",
-        "tfs_z": None,
-        "timeout": None,
-        "top_k": None, 
-        "top_p": None,
-        "verbose": False
-    }
-else:
-    TWEAKS.pop("OpenAIModel-jz1Db", None)
-    TWEAKS.pop("OllamaModel-0kgkQ", None)
-    TWEAKS["OpenAIModel-jz1Db"] = {
-        "api_key": os.getenv("OPENAI_API_KEY"),
-        "input_value": "",
-        "json_mode": False,
-        "max_tokens": None,
-        "model_kwargs": {},
-        "model_name": model_name,
-        "openai_api_base": "",
-        "output_schema": {},
-        "seed": 1,
-        "stream": False,
-        "system_message": "",
-        "temperature": 0
-    }
-
+TWEAKS = model_tweaks(model_type, model_name)
 
 
 # -----------------------------------------------------------------------------------------------------------#
